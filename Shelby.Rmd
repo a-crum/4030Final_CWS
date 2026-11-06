@@ -1,0 +1,25 @@
+
+---
+title: "SDS 4030 Final Project"
+author: "Shelby Whitaker"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+source("00_Setup.R")
+```
+
+# Part 1: Multiple Linear Regression
+
+```{r}
+summary(full)
+```
+
+# Part 2: Heteroscedasticity
+
+# Part 3: Robust Inference
+
+# Part 4: Weighted Least Squares
+
+# Part 13: Global Tests
+  
