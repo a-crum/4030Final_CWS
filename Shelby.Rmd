@@ -11,15 +11,340 @@ source("00_Setup.R")
 
 # Part 1: Multiple Linear Regression
 
+
 ```{r}
 summary(full)
 ```
+- Full model: Income ~ Age + Educ + Hours + TVHours + MEduc + FEduc + Sibs
+- R^2 = 0.0101. means only about 1% of variation in Income explained by the model
+- Overall F-test: p = 0.3136 > 0.05 → fail to reject H0 (all slopes = 0)
+- No individual predictors significant at 5% level
+
+
+## Linear Constraints
+
+H0: 10*beta_MEduc = 20*beta_FEduc = 2
+
+- Two restrictions: beta_MEduc = 0.2 and beta_FEduc = 0.1
+- HA: At least one restriction does not hold
+
+```{r}
+names(coef(full))
+
+R = rbind(c(0, 0, 0, 0, 0, 10, 0, 0),
+          c(0, 0, 0, 0, 0, 0, 20, 0))
+r = c(2, 2)
+k = length(r)
+
+R
+r
+```
+
+
+## Exact F-Test
+
+```{r}
+Y = gss$Income
+X = model.matrix(full)
+n = dim(X)[1]
+p = dim(X)[2]
+beta = full$coefficients
+S = summary(full)$sigma
+
+FT = crossprod(R %*% beta - r,
+               solve(R %*% solve(crossprod(X), t(R)),
+                     R %*% beta - r))[,] / (k * S^2)
+print(FT)
+
+pvalue = pf(FT, k, n - p, lower.tail = FALSE)
+print(pvalue)
+```
+- F = 0.0668
+- p = 0.9354 > 0.05 so fail to reject H0
+- Not enough evidence that either constraint is violated
+
+
+## Asymptotic Wald Test
+
+```{r}
+WT = k * FT
+print(WT)
+
+pvalue = pchisq(WT, k, lower.tail = FALSE)
+print(pvalue)
+```
+- Wald stat = 0.1336
+- p = 0.9354 > 0.05 so fail to reject H0
+- Same conclusion as exact F-test
+- Wald statistic = \(k \times F = 2 \times 0.0668\)
+
+
+## Asymptotic Score Test
+
+```{r}
+beta0 = beta - solve(crossprod(X), crossprod(R, solve(R %*%solve(crossprod(X), t(R)), R %*% beta - r)))[,]
+print(beta0)
+
+residuals0 = Y - X %*% beta0
+sigma0 = sqrt(mean(residuals0^2))
+print(sigma0)
+
+SF = crossprod(X, residuals0) / sigma0^2
+FI = crossprod(X) / sigma0^2
+ST = crossprod(SF, solve(FI, SF))[,]
+print(ST)
+
+P = X %*% solve(crossprod(X), t(X))
+ST = sum((P %*% residuals0)^2) / sigma0^2
+print(ST)
+
+ST = WT * S^2 / sigma0^2
+print(ST)
+
+pvalue = pchisq(ST, k, lower.tail = FALSE)
+print(pvalue)
+```
+- Score stat = 0.1349, p = 0.9348 > 0.05 so fail to reject H0
+- Same conclusion as F-test and Wald test
+- Uses residual variance estimated under H0 (restricted model), unlike Wald test
+
+
+## Asymptotic Likelihood Ratio Test
+
+```{r}
+LR = n * log(1 + WT / (n - p))
+print(LR)
+
+LR = -n * log(1 - ST / n)
+print(LR)
+
+pvalue = pchisq(LR, k, lower.tail = FALSE)
+print(pvalue)
+```
+- LR stat = 0.1349, p = 0.9348 > 0.05 so fail to reject H0
+- Same conclusion as the other three tests
+- Both methods of calculating LR give the same result
+
+
+## Comparison of Tests
+
+- All four tests had p > 0.05 so we fail to reject H0
+- No sig. evidence against the two constraints on MEduc and FEduc
+- Wald = k × F = 2 × F 
+- Wald uses full model residual variance and score uses restricted model residual variance 
+- LR related to Wald and Score through the formulas in Lecture 21
+- All three asymptotic tests are equivalent asymptotically. means test statistics and p-values are very close here
 
 # Part 2: Heteroscedasticity
 
+## Studentized Breusch-Pagan Test
+
+```{r}
+fit = full
+X = model.matrix(fit)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+residuals = fit$residuals
+
+Yaux = residuals^2
+aux = lm(Yaux ~ Age + Educ + Hours + TVHours +MEduc + FEduc + Sibs, gss)
+
+BP = n * summary(aux)$r.squared
+print(BP)
+
+pvalue = pchisq(BP, p, lower.tail = FALSE)
+print(pvalue)
+
+library(lmtest)
+bptest(fit)
+```
+- BP = 8.9559, p = 0.2558 > 0.05 so fail to reject H0
+- Menas no significant evidence that error variance depends on the 7 quantitative covariates
+- Both manual calculation and bptest(fit) give the same results
+
+
+## Brown-Forsythe Tests
+
+```{r}
+#sex
+Y = fit$residuals
+Ymed = aggregate(Y ~ Sex, gss, median)[gss$Sex, 2]
+Yaux = abs(Y - Ymed)
+aux = lm(Yaux ~ Sex, gss)
+anova(aux)
+```
+- Sex: F = 0.341, p = 0.5594 > 0.05 so fail to reject H0
+- No significant evidence that residual variance differs between males and females
+
+```{r}
+# Happy
+Ymed = aggregate(Y ~ Happy, gss, median)[gss$Happy, 2]
+Yaux = abs(Y - Ymed)
+aux = lm(Yaux ~ Happy, gss)
+anova(aux)
+```
+- Happy: F = 1.2695, p = 0.2815 > 0.05 so fail to reject H0
+- No significant evidence that residual variance differs across happiness levels
+
+```{r}
+# Marital
+Ymed = aggregate(Y ~ Marital, gss, median)[gss$Marital, 2]
+Yaux = abs(Y - Ymed)
+aux = lm(Yaux ~ Marital, gss)
+anova(aux)
+```
+- Marital: F = 0.3196, p = 0.8649 > 0.05 so fail to reject H0
+- No significant evidence that residual variance differs across marital status groups
+
+```{r}
+# Work
+Ymed = aggregate(Y ~ Work, gss, median)[gss$Work, 2]
+Yaux = abs(Y - Ymed)
+aux = lm(Yaux ~ Work, gss)
+anova(aux)
+```
+- Work: F = 0.6190, p = 0.7405 > 0.05 so fail to reject H0
+- No significant evidence that residual variance differs across work-status groups
+
+```{r}
+# Zodiac
+Ymed = aggregate(Y ~ Zodiac, gss, median)[gss$Zodiac, 2]
+Yaux = abs(Y - Ymed)
+aux = lm(Yaux ~ Zodiac, gss)
+anova(aux)
+```
+- Zodiac: F = 1.2228, p = 0.2671 > 0.05 so fail to reject H0
+- No significant evidence that residual variance differs across zodiac signs
+
+### Overall Conclusion
+- All heteroscedasticity tests have p > 0.05 so they all fail to reject H0 for all
+- So there is no significant evidence that residual variance depends on any quantitative or qualitative covariates
+- We can't conclude that variance is constant just no evidence against it from these tests
+- Brown-Forsythe tests used OLS residuals instead of the original response to check error variance 
+
+
 # Part 3: Robust Inference
 
+## Ordinary OLS Covariance Matrix
+
+```{r}
+p = dim(X)[2]
+
+vcovOLS = summary(fit)$sigma^2 * summary(fit)$cov.unscaled
+print(vcovOLS)
+
+confint(fit)
+summary(fit)
+```
+
+## HC3 Robust Covariance Matrix
+```{r}
+Sigma = diag(residuals^2 / (1 - hatvalues(fit))^2)
+vcovHC3 = summary(fit)$cov.unscaled %*% crossprod(X, Sigma) %*%
+    X %*% summary(fit)$cov.unscaled
+print(vcovHC3)
+
+library(sandwich)
+vcovHC3 = vcovHC(fit)
+print(vcovHC3)
+```
+- Manual HC3 calculation = vcovHC(fit) so same results
+- HC3 covariance matrix differs from OLS covariance matrix
+- Some HC3 variances are larger, others smaller which means robust standard errors can increase or decrease
+- HC3 adjusts for heteroscedasticity and leverage
+
+
+## HC3 Robust 95% Confidence Intervals
+
+```{r}
+alpha = 0.05
+CI = cbind(beta - qt(1 - alpha / 2, n - p) * sqrt(diag(vcovHC3)),beta + qt(1 - alpha / 2, n - p) * sqrt(diag(vcovHC3)))
+colnames(CI) = colnames(confint(fit))
+print(CI)
+
+library(lmtest)
+confint(coeftest(fit, vcov. = vcovHC3))
+```
+- Manual HC3 CIs = confint(coeftest(...)) so same results
+- All 95% CIs contain 0 which means no coefficients statistically significant at 5%
+- HC3 CIs differ from OLS CIs; some are wider and others narrower
+- Same significance conclusions as OLS
+
+
+## HC3 Robust t-Tests
+```{r}
+test = matrix(0, p, 4)
+rownames(test) = names(fit$coefficients)
+colnames(test) = colnames(summary(fit)$coefficients)
+test[,1] = beta
+test[,2] = sqrt(diag(vcovHC3))
+test[,3] = test[,1] / test[,2]
+test[,4] = 2 * pt(abs(test[,3]), n - p, lower.tail = FALSE)
+print(test)
+
+coeftest(fit, vcov. = vcovHC3)
+```
+- Manual HC3 t-tests = coeftest(fit, vcov. = vcovHC3) so same results
+- All p-values > 0.05 so no statistically significant coefficients at 5%
+- Hours (p = 0.0746) and TVHours (p = 0.0638) are closest to significance
+- Same conclusions as OLS, even though standard errors and p-values changed
+
+## Overall Comparison
+- HC3 adjusts standard errors for potential heteroscedasticity and leverage
+- Some SEs increase (Age, Sibs), others decrease (Hours, TVHours)
+- HC3 confidence intervals also change, but all still contain 0
+- No significant predictors at 5% under either method so overall conclusions unchanged
+- Even though Part 2 didn't find significant heteroscedasticity, HC3 gives a robustness check on OLS inference
+
 # Part 4: Weighted Least Squares
+
+## Iteratively Reweighted Least Squares
+
+```{r}
+fit = full
+residuals = fit$residuals
+n = length(residuals)
+
+w = rep(1, n)
+err = Inf
+tol = 1e-10
+niter = 0
+maxiter = 1e3
+while (err > tol & niter < maxiter)
+{
+    aux = lm(log(residuals^2) ~ log(Age), gss)
+    err = sum(abs(w - exp(-aux$fitted.values))) / sum(w)
+    w = exp(-aux$fitted.values)
+    WLS = lm(Income ~ Age + Educ + Hours + TVHours + MEduc + FEduc + Sibs, gss, weights = w)
+    residuals = WLS$residuals
+    niter = niter + 1
+}
+summary(aux)
+summary(WLS)
+```
+- Estimated variance: sigma² = exp(22.2574) × Age^0.6978
+- log(Age) coefficient = 0.6978 > 0 → estimated error variance increases with Age
+- IRLS assigns lower weights to observations with higher estimated error variance
+- log(Age) p = 0.000671 → significant in auxiliary variance regression
+
+
+## WLS 95% Confidence Intervals
+```{r}
+confint(WLS)
+```
+- All WLS 95% CIs contain 0 so there is no significant coefficients at 5%
+- WLS CIs differ slightly from OLS since coefficients and SEs changed
+- Same significance conclusions as OLS
+
+```{r}
+print(niter)
+print(err)
+print(err <= tol)
+```
+- IRLS converged after 16 iterations
+- Final error = 6.09e-11 < 1e-10 so convergence achieved
+- WLS fitted successfully using the estimated Age-based weights
+
 
 # Part 13: Global Tests
   
