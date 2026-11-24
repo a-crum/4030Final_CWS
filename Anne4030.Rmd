@@ -1,0 +1,486 @@
+---
+title: "Anne_4030finalproject"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-11-24"
+---
+# Part 5
+## Code
+```{r part 5 - Jackknife}
+#Jackknife (Lecture 28)
+source("00_Setup.R")
+
+fit = full
+data_used = model.frame(fit)
+X = model.matrix(fit)
+n = nrow(data_used)
+p = ncol(X) - 1
+beta = coef(fit)
+residuals = residuals(fit)
+sigma = summary(fit)$sigma
+
+plot(fit$fitted.values, rstandard(fit), xlab = "Fitted Values",
+ylab = "Standardized Residuals", pch = 16, cex = 0.5)
+abline(h = 0, lty = 2, lwd = 2)
+
+betajack = matrix(0, n, p + 1)
+colnames(betajack) = names(beta)
+
+for (i in 1:n)
+{
+jack = lm(formula(fit), data = data_used[setdiff(1:n, i), ])
+betajack[i,] = coef(jack)
+}
+
+betabar = colMeans(betajack)
+SE = apply(betajack, 2, sd) * sqrt((n - 1)^2 / n)
+
+ols_summary = summary(fit)$coefficients
+comparison_table = data.frame(OLS_Estimate=beta, Jackknife_Mean = betabar, OLS_SE = ols_summary[, "Std. Error"], Jackknife_SE = SE)
+
+print(comparison_table)
+```
+
+```{r part 5 - Nonparametric Bootstrap}
+#Nonparametric bootstrap (Lecture 28)
+nboot = 10000
+betaboot = matrix(0, nboot, p + 1)
+colnames(betaboot) = names(beta)
+
+set.seed(4030)
+for (k in 1:nboot) {
+boot_idx = sample(n,replace = TRUE)
+boot = lm(formula(fit), data=data_used[boot_idx, ])
+betaboot[k, ] = coef(boot)
+}
+
+betabar_boot = colMeans(betaboot)
+SE_boot = apply(betaboot, 2, sd)
+
+par(mfrow = c(1, 2))
+
+hist(betaboot[, 1], breaks = "FD", freq = FALSE,
+     xlab = colnames(betaboot)[1],
+     main = "Bootstrap Distribution")
+abline(v = beta[1], col = 2, lty = 2, lwd = 4)
+
+hist(betaboot[, 2], breaks = "FD", freq = FALSE,
+     xlab = colnames(betaboot)[2],
+     main = "Bootstrap Distribution")
+abline(v = beta[2], col = 2, lty = 2, lwd = 4)
+
+par(mfrow = c(1, 1))
+
+alpha = 0.05
+ols_summary = summary(fit)$coefficients
+ols_ci = confint(fit)
+
+CI_normal = cbind(
+  beta - qnorm(1 - alpha / 2) * SE_boot,
+  beta + qnorm(1 - alpha / 2) * SE_boot
+)
+colnames(CI_normal) = c("Lower", "Upper")
+print(CI_normal)
+
+CI_percentile = t(apply(
+  betaboot, 2, quantile,
+  probs = c(alpha / 2, 1 - alpha / 2)
+))
+colnames(CI_percentile) = c("Lower", "Upper")
+print(CI_percentile)
+
+CI_pivotal = cbind(
+  2 * beta - CI_percentile[, 2],
+  2 * beta - CI_percentile[, 1]
+)
+colnames(CI_pivotal) = c("Lower", "Upper")
+print(CI_pivotal)
+
+bootstrap_summary = data.frame(
+  OLS_Estimate = beta,
+  Boot_Mean = betabar_boot,
+  OLS_SE = ols_summary[, "Std. Error"],
+  Boot_SE = SE_boot,
+  OLS_2.5_CI = ols_ci[, 1],
+  OLS_97.5_CI = ols_ci[, 2],
+  Normal_2.5_CI = CI_normal[, 1],
+  Normal_97.5_CI = CI_normal[, 2],
+  Percentile_2.5_CI = CI_percentile[, 1],
+  Percentile_97.5_CI = CI_percentile[, 2],
+  Pivotal_2.5_CI = CI_pivotal[, 1],
+  Pivotal_97.5_CI = CI_pivotal[, 2]
+)
+
+print(bootstrap_summary)
+```
+## Writeup
+### Jackknife
+Using jackknife resampling across all observations, the jackknife mean coefficient estimates and ordinary least squares (OLS) point estimates are almost identical. This shows very little finite-sample bias across all predictors. On the other hand, jackknife standard errors and OLS standard errors are very different. This is because jackknife does not assume homoscedasticity, but rather accounts for non-constant error variance.
+
+### Nonparametric Bootstrap vs OLS
+With nboot = 10000 paired bootstrap resamples, bootstrap standard errors are closely tracked by jackknife SEs and are different from OLS SEs in the same directions. The bootstrap histograms (Intercept and Age) are unimodal and approx. bell-shaped around OLS estimates. We do see slight skewness at the tails.
+
+### 95% CIs
+Normal: Both OLS and Normal Bootstrap CIs are symmetric around B hat OLS, so the method with the larger SE has the wider interval. For example, age has a larger SE than MEduc and therefore has a wider interval.
+
+Percentile: Both Percentile and Pivotal Bootstrap CIs demonstrate asymmetry in the empirical bootstrap distribution. They shift left or right relative to the symmetric Normal bootstrap interval.
+
+Statistical Significance across CIs: Under OLS, Normal bootstrap, and Pivotal bootstrap CIs, all predictors' 95% CIs include 0. This indicates that there is no statistically significant individual effect at alpha = 0.05.
+
+# Part 6
+## Code
+```{r part 6 - Permutation F test}
+#Permutation F test (Lecture 29)
+source("00_Setup.R")
+
+fit = full
+X = model.matrix(fit)
+Y = model.response(model.frame(fit))
+n = nrow(X)
+p = ncol(X) - 1
+
+plot(fit$fitted.values, rstandard(fit), xlab = "Fitted Values",
+ylab = "Standardized Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+
+alpha = 0.05
+f_obs = summary(fit)$fstatistic[1]
+pvalue_theo = pf(f_obs, p, n - p - 1, lower.tail = FALSE)
+
+cat("Observed F-statistic:", f_obs, "\n")
+cat("Theoretical F-test p-value:", pvalue_theo, "\n")
+
+nperm = 10000
+fperm = numeric(nperm)
+X_cov = X[, -1]
+
+set.seed(4030)
+for (k in 1:nperm) {
+Yperm = sample(Y)
+perm = lm(Yperm ~ X_cov)
+fperm[k] = summary(perm)$fstatistic[1]
+}
+
+pvalue_perm = (1 + sum(fperm >= f_obs)) / (1 + nperm)
+cat("Permutation F-test p-value:", pvalue_perm, "\n")
+
+hist(fperm, "FD", freq = FALSE, main = NA, xlab = "Permutation
+F Test Statistics")
+curve(df(x, p, n - p - 1), add = TRUE, lty = 2, lwd = 4)
+abline(v = qf(1 - alpha, p, n - p - 1), col = 2, lty = 2, lwd =
+4)
+abline(v = quantile(fperm, 1 - alpha), col = 4, lty = 2, lwd =
+4)
+abline(v = f_obs, col = 7, lty = 2, lwd = 4)
+legend("topright", c("Theoretical Distribution", "Theoretical
+Quantile", "Empirical Quantile", "Observed Statistic"), col
+= c(1, 2, 4, 7), lty = rep(2, 4), lwd = rep(4, 4))
+```
+
+```{r part 6 - permutation t test}
+target_var = "Educ"
+t_obs = summary(fit)$coefficients[target_var, "t value"]
+pvalue_t_theo = 2 * pt(abs(t_obs), df.residual(fit), lower.tail = FALSE)
+
+cat("Target Variable:", target_var, "\n")
+cat("Observed t-statistic:", t_obs, "\n")
+cat("Theoretical t-test p-value:", pvalue_t_theo, "\n")
+
+data_used = model.frame(fit)
+form_red = update(formula(fit), paste(". ~ . -", target_var))
+aux = lm(form_red, data=data_used)
+
+fitted_red = aux$fitted.values
+residuals_red = aux$residuals
+
+response_name = names(data_used)[1]
+
+nperm = 10000
+tperm = numeric(nperm)
+
+set.seed(4030)
+for (k in 1:nperm)
+{
+Yperm = fitted_red + sample(residuals_red)
+perm_data = data_used
+perm_data[[response_name]] = Yperm
+perm = lm(formula(fit), data=perm_data)
+tperm[k] = summary(perm)$coefficients[target_var, "t value"]
+}
+
+pvalue_tperm = (1 + sum(abs(tperm) >= abs(t_obs))) / (1 + nperm)
+cat("Permutation t-test p-value:", pvalue_tperm, "\n")
+
+hist(tperm, "FD", freq = FALSE, main = NA, 
+     xlab = paste("Permutation t Test Statistics (", target_var, ")", sep = ""))
+curve(dt(x, df.residual(fit)), add = TRUE, lty = 2, lwd = 4)
+abline(v = qt(c(alpha / 2, 1 - alpha / 2), df.residual(fit)), col = 2, lty = 2, lwd = 4)
+abline(v = quantile(tperm, c(alpha / 2, 1 - alpha / 2)), col = 4, lty = 2, lwd = 4)
+abline(v = t_obs, col = 7, lty = 2, lwd = 4)
+legend("topright", 
+       c("Theoretical Distribution", "Theoretical Quantiles", "Empirical Quantiles", "Observed Statistic"), 
+       col = c(1, 2, 4, 7), lty = rep(2, 4), lwd = rep(4, 4))
+
+```
+## Writeup
+### Overall Model Significance
+After permuting the response vector Income 10000 times while holding the covariate matrix fixed to test H0: B_Age = B_Educ = ... = B_Sibs = 0, the observed F statistic is F_obs = 1.1766. Under the theoretical F_7,807 distribution, the p value is 0.3136. Under the empirical permutation, the p value is 0.3036. The empirical permutation histogram follows the theoretical F_7,807 density curve. Both p values are > 0.05. Therefore, both tests fail to reject the null hypothesis. There is no statistically significant joint linear relationship between Income and the other quantitative covariates.
+
+### Single Covariate Significance for Educ
+To test H0: B_Educ = 0, I applied the Freedman-Lane residual permutation procedure. The reduced model was fit without Educ, the fitted values and residuals were extracted, and 10000 permuted response vectors were generated before refitting the full model. The observed t statistic for Educ is t_obs = 0.5740. The two sided permutation p value is 0.5669 and the two sided theoretical t_807 p value is 0.5661. In comparison, the empirical permutation t distribution aligns well with the theoretical t_807 curve and critical quantiles, and the two p values align to the third decimal place (0.5669 vs 0.5661), Both tests fail to reject H0 since the values are greater than 0.05. Therefore, there is no statistically significant partial linear effect of years of education on Income in the untransformed model.
+
+# Part 7
+## Code
+```{r part 7 - transformations/residual diagnostics 1}
+source("00_Setup.R")
+library(MASS)
+
+fit = full
+alpha = 0.05
+
+BC = boxcox(fit, lambda = seq(-2, 2, 0.01))
+
+ci_bounds = range(BC$x[BC$y > max(BC$y) - qchisq(alpha, 1, lower.tail = FALSE) / 2])
+cat("95% Asymptotic CI for Lambda: [", ci_bounds[1], ",", ci_bounds[2], "]\n")
+
+lambda_opt = BC$x[which.max(BC$y)]
+cat("Optimal Lambda:", lambda_opt, "\n")
+
+data_used = model.frame(fit)
+response_name = all.vars(formula(fit))[1]
+Y = data_used[[response_name]]
+
+lambda = seq(-2, 2, 0.01)
+loglik = numeric(length(lambda))
+
+for (i in 1:length(lambda)) {
+  if (lambda[i] == 0) {
+    Ypower = log(Y)
+  } else {
+    Ypower = (Y^lambda[i] - 1) / lambda[i]
+  }
+
+  data_power = data_used
+  data_power[[response_name]] = Ypower
+
+  power = lm(formula(fit), data = data_power)
+  loglik[i] = as.numeric(logLik(power)) +
+    (lambda[i] - 1) * sum(log(Y))
+}
+
+plot(lambda, loglik, "l",
+     xlab = expression(lambda),
+     ylab = "Profile Log-Likelihood", lwd = 4)
+
+abline(h = max(loglik) - qchisq(alpha, 1, lower.tail = FALSE) / 2,
+       lty = 2, lwd = 4)
+
+abline(v = ci_bounds, lty = 2, lwd = 4)
+
+data_transformed = model.frame(fit)
+response_name = all.vars(formula(fit))[1]
+Y = data_transformed[[response_name]]
+
+if (abs(lambda_opt) < 0.001) {
+  data_transformed[[response_name]] = log(Y)
+} else {
+  data_transformed[[response_name]] =
+    (Y^lambda_opt - 1) / lambda_opt
+}
+
+fit_transformed = lm(formula(fit), data = data_transformed)
+
+predictor_names = all.vars(formula(fit_transformed))[-1]
+
+par(mfrow = c(2, 4))
+
+for (v in predictor_names) {
+  plot(data_transformed[[v]], rstandard(fit_transformed),
+       main = paste("Residuals vs", v),
+       cex.main = 0.9,
+       xlab = v,
+       ylab = "Standardized Residuals",
+       pch = 16)
+
+  abline(h = 0, lty = 2)
+}
+
+par(mfrow = c(1, 1))
+```
+
+```{r part 7 - transformations/residual diagnostics 2}
+summary(fit_transformed)
+
+plot(fit_transformed$fitted.values,
+     rstandard(fit_transformed),
+     main = "Transformed Model Standardized Residuals",
+     xlab = "Fitted Values",
+     ylab = "Standardized Residuals",
+     pch = 16)
+
+abline(h = 0, lty = 2, lwd = 2)
+
+z = sort(rstandard(fit_transformed))
+m = length(z)
+
+qq_probs = (1:m) / (m+1)
+expected = qnorm(qq_probs)
+D = sqrt(-log(alpha / 2) / (2 * m))
+
+lower = qnorm(pmax(.Machine$double.eps, qq_probs - D))
+upper = qnorm(pmin(1 - .Machine$double.eps, qq_probs + D))
+
+plot(expected, z,
+     main = "Normal Q-Q Plot with 95% Confidence Bands",
+     xlab = "Expected Normal Quantiles",
+     ylab = "Observed Standardized Residuals",
+     pch = 16)
+
+abline(0, 1, col = 2, lwd = 2)
+lines(expected, lower, col = 4, lty = 2, lwd = 2)
+lines(expected, upper, col = 4, lty = 2, lwd = 2)
+
+legend("topleft",
+       legend = c("Reference Line", "95% Confidence Bands"),
+       col = c(2, 4), lty = c(1, 2), lwd = 2)
+```
+
+## Writeup
+
+1. According to my plots of standardized residuals against each covariate, there is no clear evidence that any covariates need transformation. All plots are randomly scattered around 0, suggesting no need for transformation.
+
+2. According to my Box-Cox analysis, the optimal lambda is -0.12. The lower bound of the CI is -0.14 and the upper bound is -0.10. Since both 0 (exact log transformation) and 1 (no transformation) are outside of the CI, the results support transforming income with the Box-Cox power transformation.
+
+3. Refitting the linear regression on the Box-Cox transformed Income response greatly improves the overall model fit. However, the plot of standardized residuals against fitted values continues to show non-constant spread and extreme outliers. Additionally, in the Normal Q-Q plot with 95% simultaneous Kolmogorov-Smirnov confidence bands, the observed standardized residuals deviate outside the bands in both lower and upper tails. Therefore, we reject the null hypothesis that the standardized residuals follow a normal distribution. This demonstrates that heavy tails and residual heteroskedasticity continue after power-transformation on Income.
+
+# Part 11
+## Code
+```{r part 11 - collinearity and regularization}
+source("00_Setup.R")
+
+library(faraway)
+library(glmnet)
+
+fit = full
+X_mat = model.matrix(fit)[, -1]
+Y_vec = model.response(model.frame(fit))
+
+n = nrow(X_mat)
+p = ncol(X_mat)
+
+cat("--- Variance Inflation Factors (VIF) ---\n")
+vif_values = vif(fit)
+print(vif_values)
+
+high_vif = vif_values[vif_values > 5]
+if (length(high_vif) > 0) {
+  cat("\nVariables exhibiting high collinearity (VIF > 5):\n")
+  print(high_vif)
+} else {
+  cat("\nNo variables exceed VIF threshold of 5.\n")
+}
+
+
+cv_ridge = cv.glmnet(X_mat, Y_vec, alpha = 0, nfolds = 5)
+fit_ridge = glmnet(X_mat, Y_vec, alpha = 0, lambda = cv_ridge$lambda.min)
+
+cv_lasso = cv.glmnet(X_mat, Y_vec, alpha = 1, nfolds = 5)
+fit_lasso = glmnet(X_mat, Y_vec, alpha = 1, lambda = cv_lasso$lambda.min)
+
+cat("Ridge optimal lambda:", cv_ridge$lambda.min, "\n")
+cat("Lasso optimal lambda:", cv_lasso$lambda.min, "\n")
+
+nboot = 1000
+boot_ridge_coefs = matrix(0, nboot, p)
+boot_lasso_coefs = matrix(0, nboot, p)
+colnames(boot_ridge_coefs) = colnames(boot_lasso_coefs) = colnames(X_mat)
+
+set.seed(4030)
+for (b in 1:nboot) {
+  boot_ind = sample(1:n, replace = TRUE)
+  boot_ridge_coefs[b, ] = as.vector(glmnet(X_mat[boot_ind, ], Y_vec[boot_ind], alpha = 0, lambda = cv_ridge$lambda.min)$beta)
+  boot_lasso_coefs[b, ] = as.vector(glmnet(X_mat[boot_ind, ], Y_vec[boot_ind], alpha = 1, lambda = cv_lasso$lambda.min)$beta)
+}
+
+se_ridge = apply(boot_ridge_coefs, 2, sd)
+se_lasso = apply(boot_lasso_coefs, 2, sd)
+
+top_vifs = sort(vif(fit), decreasing = TRUE)
+var1 = names(top_vifs)[1]
+var2 = names(top_vifs)[2]
+
+if (var1 %in% colnames(X_mat) && var2 %in% colnames(X_mat)) {
+  par(mfrow = c(1, 2))
+  
+  plot(boot_ridge_coefs[, var1], boot_ridge_coefs[, var2],
+       xlab = paste("Bootstrap Ridge:", var1),
+       ylab = paste("Bootstrap Ridge:", var2),
+       pch = 16, cex = 0.5, main = "Ridge Estimates")
+  abline(h = 0, lty = 2, lwd = 2)
+  abline(v = 0, lty = 2, lwd = 2)
+  
+  plot(boot_lasso_coefs[, var1], boot_lasso_coefs[, var2],
+       xlab = paste("Bootstrap Lasso:", var1),
+       ylab = paste("Bootstrap Lasso:", var2),
+       pch = 16, cex = 0.5, main = "Lasso Estimates")
+  abline(h = 0, lty = 2, lwd = 2)
+  abline(v = 0, lty = 2, lwd = 2)
+  
+  par(mfrow = c(1, 1))
+}
+
+ols_sum = summary(fit)$coefficients[-1, ]
+ols_coefs = ols_sum[, "Estimate"]
+ols_se = ols_sum[,"Std. Error"]
+
+part11_summary = data.frame(
+  OLS_Estimate  = ols_coefs,
+  OLS_SE        = ols_se,
+  Ridge_Est     = as.vector(fit_ridge$beta),
+  Ridge_Boot_SE = se_ridge,
+  Lasso_Est     = as.vector(fit_lasso$beta),
+  Lasso_Boot_SE = se_lasso
+)
+
+print(part11_summary)
+```
+## Writeup
+### External Package Explanation (glmnet)
+The external package used in my code, glmnet, standardizes predictors by default (standardize=TRUE), minimizes the penalized residual sum of squares with l2 (alpha=0) or l1 (alpha=1) penalty at the 5 fold CV lambda.min, and gives positive bootstrap SEs for Lasso when bootstrap samples display nonzero slopes despite the full sample fit shrinking them to 0.
+
+### Collinearity (VIF)
+All 7 VIFs are low, ranging from 1.0267 for Hours to 1.9003 (MEduc). Since all VIFs are below the standard threshold of 5, severe multicollinearity is not present. However, parental education variables (FEduc and MEduc) show strong pairwise correlation among predictors.
+
+### Ridge and Lasso vs OLS
+Ridge shrinks every OLS coefficient proportionally towards 0. In the bootstrap scatter plot for the two highest VIF (FEduc and MEduc), ridge estimates form a continuous cloud centered near the origin. In Lasso, all 7 slope coefficients are shrunk exactly to 0. In the FEduc vs MEduc bootstrap scatterplot, the points collapse onto the coordinate axes. This shows lasso's variable-selection sparsity.
+
+### Bootstrap vs OLS SEs
+Across all 7 covariates, the regularized bootstrap SEs (ridge and lasso) are uniformly smaller than the classical OLS SEs. This demonstrates the bias-variance tradeoff of regularization. Penalization introduces shrinkage bias toward 0 but substantially reduces estimator variance compared to unpenalized OLS.
+
+# Part 14
+## Code
+```{r part 14 - FWER and FDR}
+raw_pvals = summary(full)$coefficients[-1, "Pr(>|t|)"]
+
+p_bonferroni = p.adjust(raw_pvals, method = "bonferroni")
+p_holm       = p.adjust(raw_pvals, method = "holm")
+p_fdr        = p.adjust(raw_pvals, method = "BH")
+
+multiple_testing_summary = data.frame(
+  Raw_PValue = raw_pvals,
+  Bonferroni = p_bonferroni,
+  Holm = p_holm,
+  FDR_BH = p_fdr,
+  Sig_Raw = raw_pvals <= 0.05,
+  Sig_FWER = p_holm <= 0.05,
+  Sig_FDR = p_fdr <= 0.05
+)
+print(multiple_testing_summary)
+```
+## Writeup
+To account for testing 7 predictor hypotheses simultaneously in the baseline quantitative OLS model at alpha=0.05, I compared unadjusted t test p values against 2 FWER procedures (Bonferroni and Holm) and one FDR procedure (Benjamini-Hochberg).
+
+1. Unadjusted p values: Prior to adjustment, none of the 7 predictors are statistically significant with a p value less than 0.05. The smallest p value is Sibs (0.0803), and the highest is MEduc (0.9096).
+2. FWER: Bonferroni raised Sibs to 0.5620 and MEduc, among others, to 1.0000. Holm's step-down procedure is uniformly less conservative than Bonferroni, but all p values are still above 0.05.
+3. FDR: BH has greater statistical power and moved Sibs Hours, and TVHours to 0.2903. However, all indicators' pvalues are still greater than 0.05. This confirms that no individual quantitaitve covariate shows a statistically significant linear association with untransformed Income under either FWER or FDR control.
